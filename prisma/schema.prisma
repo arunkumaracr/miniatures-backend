@@ -1,0 +1,32 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Category {
+  id       String    @id
+  slug     String    @unique
+  label    String
+  icon     String
+  products Product[]
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  title         String
+  categoryId    String
+  category      Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  ageRange      String   @default("3+ Years")
+  badge         String   @default("")
+  originalPrice Float
+  discountPrice Float
+  rating        Float    @default(5.0)
+  reviewCount   Int      @default(0)
+  imageUrl      String
+  isAvailable   Boolean  @default(true)
+  isTopSelling  Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
