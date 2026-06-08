@@ -15,18 +15,54 @@ model Category {
 }
 
 model Product {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   title         String
   categoryId    String
-  category      Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  ageRange      String   @default("3+ Years")
-  badge         String   @default("")
+  category      Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  ageRange      String      @default("3+ Years")
+  badge         String      @default("")
   originalPrice Float
   discountPrice Float
-  rating        Float    @default(5.0)
-  reviewCount   Int      @default(0)
+  rating        Float       @default(5.0)
+  reviewCount   Int         @default(0)
   imageUrl      String
-  isAvailable   Boolean  @default(true)
-  isTopSelling  Boolean  @default(false)
-  createdAt     DateTime @default(now())
+  isAvailable   Boolean     @default(true)
+  isTopSelling  Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  orderItems    OrderItem[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  orders    Order[]
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  orderNumber   String      @unique
+  userId        String?
+  user          User?       @relation(fields: [userId], references: [id])
+  customerName  String
+  customerEmail String
+  customerPhone String?
+  address       String?
+  status        String      @default("pending")
+  totalAmount   Float
+  items         OrderItem[]
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int
+  price     Float
 }
