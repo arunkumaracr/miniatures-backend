@@ -20,6 +20,8 @@ const PORT = parseInt(process.env.PORT || "5000", 10);
 const allowedOrigins = [
   "http://localhost:3000",
   "https://miniatures-frontend.vercel.app",
+  "https://miniaturestoy.in",
+  "https://www.miniaturestoy.in",
   process.env.FRONTEND_URL,
 ].filter(Boolean) as string[];
 
