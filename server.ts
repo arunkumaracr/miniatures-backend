@@ -8,6 +8,8 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { CloudinaryStorage } from "multer-storage-cloudinary";
+import { cloudinary } from "./lib/cloudinary.js";
 import { prisma } from "./prisma/prismaClient.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "jwt_secret_change_in_prod";
@@ -15,7 +17,22 @@ const JWT_SECRET = process.env.JWT_SECRET || "jwt_secret_change_in_prod";
 const app = express();
 const PORT = parseInt(process.env.PORT || "5000", 10);
 
-app.use(cors());
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://miniatures-frontend.vercel.app",
+  process.env.FRONTEND_URL,
+].filter(Boolean) as string[];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+}));
 app.use(express.json());
 
 // ─────────────────────────────────────────────
@@ -343,31 +360,22 @@ app.delete("/api/products/:id", adminAuth, async (req: Request, res: Response) =
   }
 });
 
-// 11. Create uploads folder if it doesn't exist
-const uploadsDir = "./uploads";
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir);
 
-// Multer config — save to /uploads with original extension
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}${path.extname(file.originalname)}`);
-  },
+
+// Cloudinary storage config — uploads go directly to Cloudinary, not local disk
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "miniaturestoys-products", // organizes uploads in this folder on Cloudinary
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    transformation: [{ width: 1000, height: 1000, crop: "limit" }], // auto-resize large images
+  } as any,
 });
 
 const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
-  fileFilter: (_req, file, cb) => {
-    const allowed = /jpeg|jpg|png|webp/;
-    const valid = allowed.test(path.extname(file.originalname).toLowerCase());
-    valid ? cb(null, true) : cb(new Error("Only images allowed"));
-  },
 });
-
-// Serve uploaded images as static files
-app.use("/uploads", express.static("uploads"));
 
 // IMAGE UPLOAD ENDPOINT (Admin only)
 // POST http://localhost:5000/api/upload
@@ -376,7 +384,9 @@ app.post("/api/upload", adminAuth, upload.single("image"), (req: Request, res: R
     res.status(400).json({ error: "No image file provided." });
     return;
   }
-  const imageUrl = `http://localhost:5000/uploads/${req.file.filename}`;
+
+  // Cloudinary gives back a permanent HTTPS URL in req.file.path
+  const imageUrl = (req.file as any).path;
   res.json({ imageUrl });
 });
 
