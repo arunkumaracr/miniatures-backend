@@ -57,12 +57,20 @@ model Order {
   updatedAt     DateTime    @updatedAt
 }
 
+model NewLaunch {
+  id           String   @id @default(cuid())
+  title        String
+  videoUrl     String
+  thumbnailUrl String?
+  createdAt    DateTime @default(now())
+}
+
 model OrderItem {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   orderId   String
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
   quantity  Int
   price     Float
 }

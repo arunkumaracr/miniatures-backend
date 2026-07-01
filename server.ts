@@ -8,9 +8,16 @@ import path from "path";
 import fs from "fs";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import Razorpay from "razorpay";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import { cloudinary } from "./lib/cloudinary.js";
 import { prisma } from "./prisma/prismaClient.js";
+
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID!,
+  key_secret: process.env.RAZORPAY_KEY_SECRET!,
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || "jwt_secret_change_in_prod";
 
@@ -364,32 +371,48 @@ app.delete("/api/products/:id", adminAuth, async (req: Request, res: Response) =
 
 
 
-// Cloudinary storage config — uploads go directly to Cloudinary, not local disk
+// Cloudinary storage config — image uploads
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: "miniaturestoys-products", // organizes uploads in this folder on Cloudinary
+    folder: "miniaturestoys-products",
     allowed_formats: ["jpg", "jpeg", "png", "webp"],
-    transformation: [{ width: 1000, height: 1000, crop: "limit" }], // auto-resize large images
+    transformation: [{ width: 1000, height: 1000, crop: "limit" }],
   } as any,
 });
 
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+
+// Cloudinary storage config — video uploads
+const videoStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "miniaturestoys-videos",
+    resource_type: "video",
+    allowed_formats: ["mp4", "mov", "webm", "avi"],
+  } as any,
 });
 
+const uploadVideo = multer({ storage: videoStorage, limits: { fileSize: 200 * 1024 * 1024 } }); // 200MB max
+
 // IMAGE UPLOAD ENDPOINT (Admin only)
-// POST http://localhost:5000/api/upload
 app.post("/api/upload", adminAuth, upload.single("image"), (req: Request, res: Response) => {
   if (!req.file) {
     res.status(400).json({ error: "No image file provided." });
     return;
   }
-
-  // Cloudinary gives back a permanent HTTPS URL in req.file.path
   const imageUrl = (req.file as any).path;
   res.json({ imageUrl });
+});
+
+// VIDEO UPLOAD ENDPOINT (Admin only)
+app.post("/api/upload/video", adminAuth, uploadVideo.single("video"), (req: Request, res: Response) => {
+  if (!req.file) {
+    res.status(400).json({ error: "No video file provided." });
+    return;
+  }
+  const videoUrl = (req.file as any).path;
+  res.json({ videoUrl });
 });
 
 // ─────────────────────────────────────────────
@@ -564,6 +587,100 @@ app.put("/api/orders/:id/status", adminAuth, async (req: Request, res: Response)
   } catch (error: any) {
     console.error("Error updating order status:", error);
     res.status(500).json({ error: "Internal server error while updating order status." });
+  }
+});
+
+// ── NEW LAUNCHES ────────────────────────────────────────────────────────────
+
+// GET all new launches (public)
+app.get("/api/new-launches", async (req: Request, res: Response) => {
+  try {
+    const launches = await prisma.newLaunch.findMany({ orderBy: { createdAt: "desc" } });
+    res.json({ launches });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch new launches." });
+  }
+});
+
+// POST create new launch (admin)
+app.post("/api/new-launches", adminAuth, async (req: Request, res: Response) => {
+  try {
+    const { title, videoUrl, thumbnailUrl } = req.body;
+    if (!title || !videoUrl) {
+      res.status(400).json({ error: "title and videoUrl are required." });
+      return;
+    }
+    const launch = await prisma.newLaunch.create({ data: { title, videoUrl, thumbnailUrl: thumbnailUrl || null } });
+    res.status(201).json({ launch });
+  } catch (error: any) {
+    console.error("New launch create error:", error);
+    res.status(500).json({ error: "Failed to create new launch.", detail: error?.message });
+  }
+});
+
+// DELETE new launch (admin)
+app.delete("/api/new-launches/:id", adminAuth, async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id);
+    await prisma.newLaunch.delete({ where: { id } });
+    res.json({ message: "Deleted successfully." });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to delete new launch." });
+  }
+});
+
+// ─────────────────────────────────────────────
+// RAZORPAY ROUTES
+// ─────────────────────────────────────────────
+
+// POST /api/payment/create-order
+// Body: { amount } — amount in paise (e.g. 49900 = ₹499)
+app.post("/api/payment/create-order", async (req: Request, res: Response) => {
+  try {
+    const { amount } = req.body;
+    if (!amount || Number(amount) < 100) {
+      res.status(400).json({ error: "Amount must be at least 100 paise (₹1)." });
+      return;
+    }
+    const order = await razorpay.orders.create({
+      amount: Number(amount),
+      currency: "INR",
+      receipt: `receipt_${Date.now()}`,
+    });
+    res.json({
+      order_id: order.id,
+      amount: order.amount,
+      currency: order.currency,
+    });
+  } catch (error: any) {
+    console.error("Razorpay create-order error:", error);
+    res.status(500).json({ error: "Failed to create Razorpay order." });
+  }
+});
+
+// POST /api/payment/verify
+// Body: { razorpay_order_id, razorpay_payment_id, razorpay_signature }
+app.post("/api/payment/verify", async (req: Request, res: Response) => {
+  try {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      res.status(400).json({ error: "Missing required payment fields." });
+      return;
+    }
+    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
+      .update(body)
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      res.status(400).json({ error: "Payment verification failed. Signature mismatch." });
+      return;
+    }
+    res.json({ verified: true, payment_id: razorpay_payment_id });
+  } catch (error: any) {
+    console.error("Razorpay verify error:", error);
+    res.status(500).json({ error: "Failed to verify payment." });
   }
 });
 
